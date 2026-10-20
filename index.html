@@ -1,4 +1,6 @@
-<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Mission Impawsible</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -20,6 +22,9 @@
   --card:"Comic Neue","Comic Sans MS",cursive;
 }
 *{box-sizing:border-box}
+/* .game, .netbar and .scrim each set a display, which otherwise beats the
+   hidden attribute and leaves them on screen before the game starts. */
+[hidden]{display:none !important}
 html,body{height:100%}
 body{margin:0;background:var(--sky);color:var(--txt);font-family:var(--ui);font-size:15px;line-height:1.5;
   background-image:radial-gradient(900px 620px at 12% 4%,rgba(255,255,255,.30),transparent 62%),
@@ -138,7 +143,6 @@ button{font-family:var(--ui);cursor:pointer}
 
 .scrim{position:fixed;inset:0;background:rgba(8,20,40,.66);display:grid;place-items:center;
   padding:18px;z-index:50;overflow-y:auto}
-.scrim[hidden]{display:none}   /* display:grid otherwise beats the hidden attribute */
 .cardface{width:min(400px,100%);border-radius:18px;padding:30px 26px;font-family:var(--card);
   text-align:center;position:relative;border:9px solid;margin:auto;
   box-shadow:0 24px 60px rgba(8,20,40,.45)}
@@ -1158,5 +1162,3 @@ function lobbyWatch(statId, code){
 $("codeIn")&&$("codeIn").addEventListener("keydown",e=>{ if(e.key==="Enter") $("goJoin").click(); });
 lobby("home");
 </script>
-
-</body></html>
