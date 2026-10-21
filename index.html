@@ -84,7 +84,11 @@ button{font-family:var(--ui);cursor:pointer}
 .panelbox{background:var(--paper);border:1px solid var(--line);border-radius:14px;overflow:hidden;
   box-shadow:0 10px 26px rgba(12,24,48,.14)}
 .panelbox>h3{font-family:var(--disp);font-size:12px;letter-spacing:2.2px;text-transform:uppercase;
-  color:var(--fog);margin:0;padding:11px 14px;border-bottom:1px solid var(--line);background:var(--paper2)}
+  color:var(--fog);margin:0;padding:11px 14px;border-bottom:1px solid var(--line);background:var(--paper2);
+  display:flex;align-items:center;gap:8px}
+#quitBtn{margin-left:auto;appearance:none;cursor:pointer;font:inherit;font-size:11px;letter-spacing:1.4px;
+  color:var(--fog);background:var(--paper);border:1px solid var(--line-s);border-radius:999px;padding:3px 11px}
+#quitBtn:hover{color:#9B2F28;border-color:#D9A8A3;background:#FDF3F2}
 
 .boardwrap{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:9px;
   position:relative;box-shadow:0 14px 34px rgba(12,24,48,.18)}
@@ -309,7 +313,7 @@ details[open] summary{border-bottom:1px solid var(--line)}
     </div>
     <div style="display:grid;gap:14px">
       <div class="panelbox">
-        <h3>Agents</h3>
+        <h3>Agents<button type="button" id="quitBtn" title="Leave the mission">Quit</button></h3>
         <div class="netbar" id="netbar" hidden><span class="netdot" id="netdot"></span><span id="nettext"></span></div>
         <div class="rollbox">
           <div class="dice">
@@ -699,7 +703,13 @@ function onNet(m){
     case "pick": if(NET.waitPick){ const f=NET.waitPick; NET.waitPick=null; clearHL(); f(m.node); } break;
     case "choice": if(NET.waitChoice){ const c=NET.waitChoice[m.i]; NET.waitChoice=null;
                      if(c){ closeModal(); tx({t:"close"}); c.go(); } } break;
-    case "bye": netStatus(false,"Partner left the game"); break;
+    case "bye": netStatus(false,"An agent left the room"); break;
+    case "quit":{                        // somebody closed the room
+      closeModal(); clearHL();
+      showCardUI("red","Room closed","Mission abandoned",
+        `${m.name||"An agent"} left the room, so this game is over.`,"",
+        [{l:"Back to registration",s:"",go:toSetup}],"", NET.seat);
+      break;}
   }
 }
 function gate(){
@@ -1268,13 +1278,38 @@ function win(p){
     <p>Final count — ${tally}.<br>
        ${esc(p.n)} closed ${p.tasks.length} task${p.tasks.length===1?"":"s"} in the field.</p>`;
   const b=document.createElement("button"); b.className="btn primary"; b.textContent="Run it back";
-  b.onclick=()=>{closeModal();$("game").hidden=true;$("setup").hidden=false;$("bgfx").hidden=false;};
+  b.onclick=toSetup;
   w.appendChild(b); s.appendChild(w);
   setRollMsg("Mission closed."); $("rollBtn").disabled=true;
 }
 
 /* ===================== boot ===================== */
 
+/* Leaving a game in progress: tear the room down and go back to registration. */
+function toSetup(){
+  closeModal(); clearHL();
+  try{ MQ&&MQ.end(true); }catch(e){}
+  MQ=null; BROKER_OK=false;
+  NET.on=false; NET.seat=null; NET.peer=null; NET.send=null;
+  NET.waitPick=null; NET.waitChoice=null;
+  ROSTER=[]; S=null;
+  $("netbar").hidden=true; $("game").hidden=true; $("setup").hidden=false; $("bgfx").hidden=false;
+  show("hostStart",false); show("jwait",false); show("joinForm",true);
+  ["roster","jroster"].forEach(id=>{const w=$(id); if(w) w.textContent="";});
+  ["hostStat","joinStat","homeStat"].forEach(id=>softish(id,""));
+  lobby("home");
+}
+function quitGame(){
+  if(!S) return toSetup();
+  const online=NET.on, me=cur()?S.P[NET.seat===null?S.turn:NET.seat]:null;
+  showCardUI("red","Leaving","Quit the mission?",
+    online ? "The room closes for everyone and the game is lost."
+           : "The game is lost and you go back to agent registration.","",
+    [{l:"Quit",s:online?"Close the room":"Back to registration",
+      go:()=>{ if(online) tx({t:"quit",name:me?me.n:"An agent"}); toSetup(); }},
+     {l:"Keep playing",s:"",go:()=>{ closeModal(); if(!NET.on||iControl()) ready(); }}],
+    "", NET.seat===null?S.turn:NET.seat);
+}
 function enterGame(){
   $("setup").hidden=true; $("game").hidden=false; $("bgfx").hidden=true;
   drawBoard(); paintAll(); faceDie("die1",1); $("log").textContent="";
@@ -1308,6 +1343,7 @@ function start(){                                  // hot-seat
 }
 $("startBtn").onclick=start;
 $("rollBtn").onclick=roll;
+$("quitBtn").onclick=quitGame;
 
 /* ---------- lobby ---------- */
 let MODE="classic", NPLAY=2, NTEAM=2, ROSTER=[];
