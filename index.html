@@ -296,6 +296,8 @@ details[open] summary{border-bottom:1px solid var(--line)}
                  style="text-transform:uppercase;letter-spacing:.32em;font-weight:700;text-align:center">
         </div>
         <button class="btn primary wide" id="goJoin">Join</button>
+        <p class="lobnote" style="margin:10px 0 0">Dropped out of a game? Join the same room
+           with the <b>same name</b> and you get your seat back, cash and cards intact.</p>
       </div>
       <div id="jwait" hidden>
         <div class="wrhead"><span>Waiting room</span><span class="wrcount" id="jwrcount">0</span></div>
@@ -322,6 +324,7 @@ details[open] summary{border-bottom:1px solid var(--line)}
           <div style="flex:1">
             <div class="rollmsg" id="rollmsg">Roll to begin.</div>
             <button class="btn primary" id="rollBtn" style="margin-top:8px">Roll the die</button>
+            <button class="btn" id="skipBtn" hidden style="margin-top:6px">Skip their turn</button>
           </div>
         </div>
         <div id="dossiers"></div>
@@ -346,6 +349,8 @@ details[open] summary{border-bottom:1px solid var(--line)}
                 back, break a red one and it costs $50.</li>
             <li>Take the fifth card at a location and its <b>gold card</b> flips on the spot.</li>
             <li>One of the nine gold cards is <b>Agent Goldie</b>. Find him and the mission is over.</li>
+            <li>Playing online, an agent who drops can rejoin with the same room code and name.
+                Until they do, their turns are skipped.</li>
           </ul></div>
         </details>
       </div>
@@ -539,7 +544,7 @@ function newGame(names,mode,teamOf,nTeams){
     // the board has two safe houses, so agents (or agencies) alternate between them
     const home = HOMES[(mode==="teams"?team:k) % HOMES.length];
     return {n:(nm||"").trim()||CATNAME[k]||("Agent "+(k+1)), cash:500, pos:home, prev:null, home,
-            tasks:[], skip:0, st:null, rookie:0, pawn:k%PAWN.length, vow:null, team};
+            tasks:[], skip:0, st:null, rookie:0, pawn:k%PAWN.length, vow:null, team, away:0};
   });
   let teams=null;
   if(mode==="teams"){
@@ -589,7 +594,13 @@ function adopt(d){
   if(d.mode) S.mode=d.mode;
   S.busy=false; paintAll(); redrawLog(); placeAll();
 }
-function placeAll(){ S.P.forEach((q,k)=>placeTok(k,NODES[q.pos].x,NODES[q.pos].y)); }
+function placeAll(){
+  S.P.forEach((q,k)=>placeTok(k,NODES[q.pos].x,NODES[q.pos].y));
+  if(HLG&&HLG.childNodes.length){
+    const on=[...HLG.querySelectorAll("circle.hl")].map(c=>({x:+c.getAttribute("cx"),y:+c.getAttribute("cy")}));
+    fadeForHL(NODES.map((n,i)=>on.some(p=>Math.abs(p.x-n.x)<1&&Math.abs(p.y-n.y)<1)?i:-1).filter(i=>i>=0));
+  }
+}
 function redrawLog(){
   const w=$("log"); w.textContent="";
   S.log.slice(0,40).forEach(e=>{const d=document.createElement("div");
@@ -650,10 +661,22 @@ function helloLoop(name){
   const iv=setInterval(()=>{ if(S||NET.seat>=0||n++>80){clearInterval(iv);return;} tx({t:"hello",name}); },1500);
 }
 
+const NEEDS_GAME={state:1,dice:1,msg:1,hop:1,glide:1,card:1,close:1,hl:1,clearhl:1,
+                  pick:1,choice:1,back:1,left:1,forceaway:1};
 function onNet(m){
+  if(NEEDS_GAME[m.t] && !S) return;      // we already walked out of this game
   switch(m.t){
     case "hello":{                       // the host keeps the roster; agents trickle in
-      if(NET.seat!==0||S) return;
+      if(S){                             // a game is already running: this is a rejoin
+        if(NET.seat==null||NET.seat<0) return;
+        const want=(m.name||"").trim().toLowerCase();
+        const k=S.P.findIndex(q=>q.n.trim().toLowerCase()===want);
+        if(k<0||k===NET.seat) return;    // not one of ours, or it is me
+        tx({t:"resume",to:m.from,seat:k,S:snap(),mode:S.mode,
+            nteams:S.teams?S.teams.length:0});
+        return;
+      }
+      if(NET.seat!==0) return;
       if(!ROSTER.some(r=>r.id===m.from)){
         if(ROSTER.length>=MAXP) return;
         ROSTER.push({id:m.from,name:(m.name||"Agent").slice(0,14),team:0});
@@ -679,8 +702,35 @@ function onNet(m){
       netStatus(true,`Online · you are ${esc(S.P[k].n)}`);
       gate();
       break;}
+    case "resume":{                      // somebody handed us the game back
+      if(S||m.to!==MYID) return;
+      NET.seat=m.seat;
+      S=newGame(m.S.P.map(q=>q.n), m.mode, m.S.P.map(q=>q.team), m.nteams||2);
+      enterGame(); adopt(m.S);
+      S.P[m.seat].away=0; paintAll();
+      netStatus(true,`Online · you are ${esc(S.P[m.seat].n)}`);
+      say(`<b>${esc(S.P[m.seat].n)}</b> is back in the room.`,true);
+      tx({t:"back",seat:m.seat});
+      gate();
+      if(iControl()&&!S.over) setTimeout(()=>{ if(iControl()&&!S.busy) beginTurn(); },400);
+      break;}
+    case "back":                         // that seat is live again
+      if(S&&S.P[m.seat]){ S.P[m.seat].away=0; paintAll(); gate();
+        say(`<b>${esc(S.P[m.seat].n)}</b> is back in the room.`); }
+      break;
+    case "left":                         // somebody stepped out; the seat stays open
+      if(S&&S.P[m.seat]){ S.P[m.seat].away=1; paintAll();
+        say(`<b>${esc(S.P[m.seat].n)}</b> left — they can rejoin with the same code and name.`,true);
+        setTimeout(coverAway,500); }
+      break;
+    case "forceaway":
+      if(S&&S.P[m.seat]){ S.P[m.seat].away=1; paintAll();
+        say(`<b>${esc(S.P[m.seat].n)}</b> was marked away.`);
+        setTimeout(coverAway,400); }
+      break;
     case "state":
       adopt(m.S); gate();
+      if(S.P[S.turn].away){ setTimeout(coverAway,400); break; }
       if(iControl() && !S.over) setTimeout(()=>{ if(iControl()&&!S.busy) beginTurn(); },320);
       break;
     case "dice": faceDie("die1",m.n); break;
@@ -712,10 +762,39 @@ function onNet(m){
       break;}
   }
 }
+/* The lowest seat still in the room keeps the game moving past empty chairs. */
+const caretaker=()=>{ const k=S.P.findIndex(q=>!q.away); return k<0?0:k; };
+function coverAway(){
+  if(!S||S.over||!NET.on) return;
+  if(!S.P[S.turn].away) return;
+  if(S.P.every(q=>q.away)) return;           // an empty room has nothing to drive
+  if(NET.seat!==caretaker()) return;
+  say(`<b>${esc(cur().n)}</b> is away — turn skipped.`);
+  S.turn=(S.turn+1)%S.P.length;
+  tx({t:"state",S:snap()}); paintAll(); gate();
+  setTimeout(()=>{
+    if(!S||S.over) return;
+    if(S.P[S.turn].away) coverAway();
+    else if(iControl()) beginTurn();
+  },500);
+}
+let waitTimer=null;
 function gate(){
   const rb=$("rollBtn");
+  if(waitTimer){ clearTimeout(waitTimer); waitTimer=null; }
+  $("skipBtn").hidden=true;
   if(!S||S.over){ rb.disabled=true; return; }
-  if(NET.on && !iControl()){ rb.disabled=true; setRollMsgLocal(`Waiting for <b>${esc(cur().n)}</b>…`); }
+  if(NET.on && !iControl()){
+    rb.disabled=true; setRollMsgLocal(`Waiting for <b>${esc(cur().n)}</b>…`);
+    // if a seat goes quiet without saying goodbye, let the table move on
+    const seat=S.turn;
+    waitTimer=setTimeout(()=>{
+      if(S&&!S.over&&S.turn===seat&&!iControl()&&!S.P[seat].away){
+        $("skipBtn").textContent=`Skip ${S.P[seat].n}'s turn`;
+        $("skipBtn").hidden=false;
+      }
+    },25000);
+  }
 }
 function setRollMsgLocal(h){ $("rollmsg").innerHTML=h; }
 
@@ -765,9 +844,17 @@ function paintBadges(){
     BADGE.appendChild(g);
   });
 }
-function clearHL(){ HLG.textContent=""; }
+/* A cat parked on an offered route would hide the pulse underneath, so it
+   fades out of the way until the choice is made. */
+function fadeForHL(nodes){
+  if(!TOK||!S) return;
+  const on=new Set(nodes||[]);
+  S.P.forEach((q,k)=>{ if(TOK[k]) TOK[k].setAttribute("opacity", on.has(q.pos)?".34":"1"); });
+}
+function clearHL(){ HLG.textContent=""; fadeForHL([]); }
 function paintHL(nodes,onPick,note){
   clearHL();
+  fadeForHL(nodes);
   nodes.forEach(idx=>{
     const n=NODES[idx];
     const g=el("g",{class:"pulse"});
@@ -900,6 +987,7 @@ function paintDossiers(){
     d.className="dossier"+(i===S.turn&&!S.over?" active":"");
     const bs=[];
     if(p.skip)bs.push(["warn","Skipping next turn"]);
+    if(p.away)bs.push(["bad","Away — can rejoin"]);
     if(p.rookie)bs.push(["bad","Next turn: needs a 1 or 6"]);
     if(p.st==="whisper")bs.push(["warn","Whispering only — until their next turn"]);
     if(p.st==="silent")bs.push(["warn","Vow of silence — until their next turn"]);
@@ -1031,7 +1119,9 @@ function afterVow(){
     say(`<b>${esc(p.n)}</b> sits this one out.`);
     setRollMsg(`<b>${esc(p.n)}</b> skipped a turn.`);
     S.turn=(S.turn+1)%S.P.length;
-    if(NET.on){ tx({t:"state",S:snap()}); paintAll(); gate(); return; }
+    if(NET.on){ tx({t:"state",S:snap()}); paintAll(); gate();
+      if(S.P[S.turn].away) setTimeout(coverAway,400);
+      return; }
     setTimeout(()=>{paintAll();beginTurn();},700); return;
   }
   ready();
@@ -1256,7 +1346,9 @@ function endTurn(extra){
     const rb=$("rollBtn"); rb.disabled=false; rb.textContent="Roll again"; S.busy=false; sync(); return;
   }
   S.turn=(S.turn+1)%S.P.length;
-  if(NET.on){ tx({t:"state",S:snap()}); paintAll(); gate(); return; }  // new controller takes it from here
+  if(NET.on){ tx({t:"state",S:snap()}); paintAll(); gate();
+    if(S.P[S.turn].away) setTimeout(coverAway,400);                    // nobody is sitting there
+    return; }                                                          // new controller takes it from here
   setTimeout(beginTurn,460);
 }
 function win(p){
@@ -1301,14 +1393,16 @@ function toSetup(){
 }
 function quitGame(){
   if(!S) return toSetup();
-  const online=NET.on, me=cur()?S.P[NET.seat===null?S.turn:NET.seat]:null;
-  showCardUI("red","Leaving","Quit the mission?",
-    online ? "The room closes for everyone and the game is lost."
+  const online=NET.on, seat=(NET.seat==null||NET.seat<0)?S.turn:NET.seat;
+  const me=S.P[seat];
+  showCardUI("red","Leaving","Leave the mission?",
+    online ? "The others carry on without you and your turns are skipped. "
+            +"Rejoin any time with the same room code and the same name."
            : "The game is lost and you go back to agent registration.","",
-    [{l:"Quit",s:online?"Close the room":"Back to registration",
-      go:()=>{ if(online) tx({t:"quit",name:me?me.n:"An agent"}); toSetup(); }},
+    [{l:online?"Leave":"Quit",s:online?"You can rejoin later":"Back to registration",
+      go:()=>{ if(online) tx({t:"left",seat}); toSetup(); }},
      {l:"Keep playing",s:"",go:()=>{ closeModal(); if(!NET.on||iControl()) ready(); }}],
-    "", NET.seat===null?S.turn:NET.seat);
+    online?`${me?me.n:"You"} can take this seat back later`:"", seat);
 }
 function enterGame(){
   $("setup").hidden=true; $("game").hidden=false; $("bgfx").hidden=true;
@@ -1344,6 +1438,15 @@ function start(){                                  // hot-seat
 $("startBtn").onclick=start;
 $("rollBtn").onclick=roll;
 $("quitBtn").onclick=quitGame;
+$("skipBtn").onclick=()=>{
+  if(!S||iControl()) return;
+  const seat=S.turn;
+  $("skipBtn").hidden=true;
+  tx({t:"forceaway",seat});
+  S.P[seat].away=1; paintAll();
+  say(`<b>${esc(S.P[seat].n)}</b> was marked away.`,true);
+  setTimeout(coverAway,300);
+};
 
 /* ---------- lobby ---------- */
 let MODE="classic", NPLAY=2, NTEAM=2, ROSTER=[];
