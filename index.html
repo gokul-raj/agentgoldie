@@ -227,6 +227,8 @@ details[open] summary{border-bottom:1px solid var(--line)}
 .rrow .you{margin-left:auto;font-size:11.5px;color:var(--fog)}
 .rrow select{font:inherit;font-size:12.5px;margin-left:auto;padding:3px 6px;border-radius:8px;
   border:1px solid var(--line-s);background:#fff;color:var(--txt)}
+button.rrow{width:100%;text-align:left;font:inherit;cursor:pointer}
+button.rrow:hover{border-color:var(--sky-d);background:var(--paper3)}
 @media (max-width:560px){.modes{grid-template-columns:1fr}}
 .lobstat{margin-top:12px;font-size:13px;color:#3E617C;min-height:20px}
 .lobstat.err{color:#9B2F28}
@@ -296,8 +298,13 @@ details[open] summary{border-bottom:1px solid var(--line)}
                  style="text-transform:uppercase;letter-spacing:.32em;font-weight:700;text-align:center">
         </div>
         <button class="btn primary wide" id="goJoin">Join</button>
-        <p class="lobnote" style="margin:10px 0 0">Dropped out of a game? Join the same room
-           with the <b>same name</b> and you get your seat back, cash and cards intact.</p>
+        <p class="lobnote" style="margin:10px 0 0">Dropped out of a game? Join the same room code
+           and you can pick your agent back up, cash and cards intact.</p>
+      </div>
+      <div id="seatPick" hidden>
+        <div class="wrhead"><span>Take your seat</span></div>
+        <div class="wrmode">A game is already running in this room — tap the agent you were playing.</div>
+        <div class="roster" id="seatList"></div>
       </div>
       <div id="jwait" hidden>
         <div class="wrhead"><span>Waiting room</span><span class="wrcount" id="jwrcount">0</span></div>
@@ -662,18 +669,15 @@ function helloLoop(name){
 }
 
 const NEEDS_GAME={state:1,dice:1,msg:1,hop:1,glide:1,card:1,close:1,hl:1,clearhl:1,
-                  pick:1,choice:1,back:1,left:1,forceaway:1};
+                  pick:1,choice:1,back:1,left:1,forceaway:1,claim:1};
 function onNet(m){
   if(NEEDS_GAME[m.t] && !S) return;      // we already walked out of this game
   switch(m.t){
     case "hello":{                       // the host keeps the roster; agents trickle in
-      if(S){                             // a game is already running: this is a rejoin
+      if(S){                             // a game is running: offer the seats back
         if(NET.seat==null||NET.seat<0) return;
-        const want=(m.name||"").trim().toLowerCase();
-        const k=S.P.findIndex(q=>q.n.trim().toLowerCase()===want);
-        if(k<0||k===NET.seat) return;    // not one of ours, or it is me
-        tx({t:"resume",to:m.from,seat:k,S:snap(),mode:S.mode,
-            nteams:S.teams?S.teams.length:0});
+        tx({t:"seats",to:m.from,mode:S.mode,nteams:S.teams?S.teams.length:0,
+            seats:S.P.map((q,i)=>({i,n:q.n,away:!!q.away}))});
         return;
       }
       if(NET.seat!==0) return;
@@ -701,6 +705,16 @@ function onNet(m){
       enterGame(); adopt(m.S);
       netStatus(true,`Online · you are ${esc(S.P[k].n)}`);
       gate();
+      break;}
+    case "seats":{                       // a running game listed its chairs for us
+      if(S||m.to!==MYID) return;
+      MODE=m.mode||MODE;
+      paintSeats(m.seats||[]);
+      break;}
+    case "claim":{                       // a returning agent asked for a chair
+      if(!S||!S.P[m.seat]) return;
+      tx({t:"resume",to:m.from,seat:m.seat,S:snap(),mode:S.mode,
+          nteams:S.teams?S.teams.length:0});
       break;}
     case "resume":{                      // somebody handed us the game back
       if(S||m.to!==MYID) return;
@@ -1386,8 +1400,8 @@ function toSetup(){
   NET.waitPick=null; NET.waitChoice=null;
   ROSTER=[]; S=null;
   $("netbar").hidden=true; $("game").hidden=true; $("setup").hidden=false; $("bgfx").hidden=false;
-  show("hostStart",false); show("jwait",false); show("joinForm",true);
-  ["roster","jroster"].forEach(id=>{const w=$(id); if(w) w.textContent="";});
+  show("hostStart",false); show("jwait",false); show("seatPick",false); show("joinForm",true);
+  ["roster","jroster","seatList"].forEach(id=>{const w=$(id); if(w) w.textContent="";});
   ["hostStat","joinStat","homeStat"].forEach(id=>softish(id,""));
   lobby("home");
 }
@@ -1517,10 +1531,24 @@ $("tcount").onchange=()=>{ NTEAM=+$("tcount").value; dealTeams(); renderFields(f
 const MODENAME={classic:"Classic — one on one",
   chaos:"Chaos — every cat for itself",teams:"Rival agencies — shared wallets"};
 /* The waiting room, shown to everyone while agents are still arriving. */
+/* A game already in progress hands back its chairs; tap one to take it. */
+function paintSeats(seats){
+  show("joinForm",false); show("jwait",false); show("seatPick",true);
+  const w=$("seatList"); w.textContent="";
+  seats.forEach(sx=>{
+    const d=document.createElement("button"); d.type="button"; d.className="rrow";
+    d.innerHTML=`<span class="pawn" style="background-image:url(${PAWN[sx.i%PAWN.length]})"></span>
+      <span>${esc(sx.n)}</span><span class="you">${sx.away?"free":"in play"}</span>`;
+    d.onclick=()=>{ softish("joinStat",`Taking ${sx.n}'s seat…`); tx({t:"claim",seat:sx.i}); };
+    w.appendChild(d);
+  });
+  softish("joinStat", seats.length ? "Tap the agent you were playing."
+                                   : "That game has no seats to give back.");
+}
 function paintRoster(list,isHost){
   ["hwrcount","jwrcount"].forEach(id=>{const e=$(id); if(e) e.textContent=list.length;});
   ["hwrmode","jwrmode"].forEach(id=>{const e=$(id); if(e) e.textContent=MODENAME[MODE]||"";});
-  if(!isHost){ show("joinForm",false); show("jwait",true); }
+  if(!isHost){ if(!$("seatPick").hidden) return; show("joinForm",false); show("jwait",true); }
   ["roster","jroster"].forEach(id=>{
     const w=$(id); if(!w) return;
     w.textContent="";
@@ -1587,13 +1615,14 @@ $("hostBtn").onclick=()=>{
 };
 $("hostStart").onclick=hostStart;
 $("joinBtn").onclick=()=>{ lobby("join"); show("joinForm",true); show("jwait",false);
-  $("joinStat").textContent=""; $("codeIn").focus(); };
+  show("seatPick",false); $("joinStat").textContent=""; $("codeIn").focus(); };
 $("cancel1").onclick=$("cancel2").onclick=()=>{
   try{ MQ&&MQ.end(true); }catch(e){}
   MQ=null; BROKER_OK=false;
   NET.on=false; NET.room=null; NET.send=null; NET.seat=null; NET.peer=null; ROSTER=[];
-  ["roster","jroster"].forEach(id=>{const w=$(id);if(w)w.textContent="";});
-  show("hostStart",false); show("jwait",false); show("joinForm",true); lobby("home");
+  ["roster","jroster","seatList"].forEach(id=>{const w=$(id);if(w)w.textContent="";});
+  show("hostStart",false); show("jwait",false); show("seatPick",false);
+  show("joinForm",true); lobby("home");
 };
 $("copyBtn").onclick=async()=>{
   try{ await navigator.clipboard.writeText($("roomCode").textContent); $("copyBtn").textContent="Copied"; }
